@@ -1,3 +1,124 @@
-lavd
-task aware ml
-tash behavior analysis
+# A Behaviour-Aware Scheduling Recommendation System for Multiplayer Game Workloads
+
+## 1. Overview & Purpose
+This framework provides a comprehensive simulation environment designed for **Game Workload Behaviour Analysis and Adaptive Scheduling**. Modern multiplayer games and latency-critical interactive applications host a diverse mixture of tasks concurrently—ranging from sub-millisecond input handling, physics processing, and audio synthesis to intensive rendering pipelines and background asset compilation.
+
+Standard conventional schedulers struggle to differentiate between urgent interactive pipelines and throughput-driven compute jobs. This simulation models a behaviour-aware scheduler that dynamically infers the latency criticality of each thread based on observed execution patterns and assigns:
+1. **Dynamic Priority Queue Order**: The order in which tasks are picked and executed from the ready queue.
+2. **Allocated Time Slice Quantum**: The precise run duration assigned to each task per scheduling round.
+
+---
+
+## 2. Theoretical Framework & Behavioral Metrics
+
+The recommendation system continuously monitors task characteristics to calculate scheduling decisions:
+
+### A. Context-Aware Latency Criticality Metric
+Tasks are evaluated on their communication frequencies and execution durations. A task is identified as highly latency-sensitive if:
+- It maintains high **Wait Frequency** (frequently waiting on input events, network packets, or synchronization locks).
+- It maintains high **Wake Frequency** (frequently waking downstream consumers or rendering threads).
+- It executes for **shorter runtimes per schedule** (bursty execution requiring rapid turnaround).
+- It receives direct hardware interrupt signals (e.g., input devices, GPU V-Sync, audio DMA).
+
+$$\text{Latency Criticality} \propto f(\text{Wait Frequency}, \text{Wake Frequency}, \text{Priority Weight}) \times \frac{1}{\text{Invariant Runtime}}$$
+
+### B. Fair Share & Anti-Greedy Penalty
+To prevent compute-bound workloads from monopolizing CPU cores, the engine tracks the historical invariant compute service consumed relative to the system average:
+- Tasks that over-consume their fair share incur an **Anti-Greedy Penalty** (up to a 200% deadline extension).
+- Interactive, underserved tasks receive zero penalty and retain priority access.
+
+### C. Virtual Deadline Computation
+Virtual deadlines are assigned to determine run queue positions:
+
+$$\text{Virtual Deadline} = \text{Logical Clock} + \frac{\text{Adjusted Runtime} \times \text{Greedy Penalty}}{\text{Latency Criticality}}$$
+
+Tasks with tight deadlines naturally sort to the **head of the queue**.
+
+### D. Adaptive Time Slice Allocation
+Rather than applying a rigid, one-size-fits-all quantum:
+- **Interactive, short tasks** receive responsive baseline slices (e.g., 0.50 ms – 5.00 ms) preventing queue stalls.
+- **Compute-intensive tasks** (e.g., shader compilation, physics pre-bakes) that consistently exceed baseline slices receive an **Allocated Time Slice Boost** (e.g., up to 20 ms – 50 ms), minimizing costly context-switching overhead while system load permits.
+
+---
+
+## 3. Simulation Output & Interpretation
+
+The simulation processes synthetic task profiles and generates three analytical phases:
+
+### Phase 1: Task Behavioural Profiling
+Summarizes input metrics including process IDs, priority weights, average runtimes, wait/wake frequencies, and event triggers.
+
+### Phase 2: Behavioral Metric Derivation
+Exposes the internal recommendation logic:
+- Computed **Latency Criticality Score**
+- **Fairness Lag & Greedy Penalty Percentage**
+- **Virtual Deadline Offset**
+
+### Phase 3: Queue Order & Allocated Execution Times
+Presents the final operational dispatch table:
+- **Queue Order (#1, #2, ...)**: The dispatch sequence from the queue.
+- **Allocated Time Slice**: The optimal execution window granted to each task.
+- **Behavioral Classification**: Identifies whether a task is treated as *Latency-Critical*, *Slice-Boosted*, or *Greedy-Penalized*.
+
+#### Representative Simulation Output
+```
+========================================================================================================
+                             FINAL OUTPUT: QUEUE ORDER & ALLOCATED TIME                                 
+========================================================================================================
+ ORDER | PID   | TASK NAME              | VIRTUAL DEADLINE   | ALLOCATED TIME     | BEHAVIOR       
+--------------------------------------------------------------------------------------------------------
+   #1  | 1002  | Audio_DSP_Buffer       | 5362               |   5.00 ms ( 5000 us) | Latency-Critical
+   #2  | 1001  | Game_Input_Thread      | 5955               |   5.00 ms ( 5000 us) | Latency-Critical
+   #3  | 1003  | Video_Renderer         | 9745               |   5.00 ms ( 5000 us) | Latency-Critical
+   #4  | 1004  | Background_Compiler    | 32210              |  20.50 ms (20500 us) | Slice-Boosted  
+   #5  | 1005  | Video_Encoder_Hog      | 39392              |  50.50 ms (50500 us) | Slice-Boosted  
+========================================================================================================
+```
+
+---
+
+## 4. How to Run the Simulation
+
+### Option 1: Native C Execution
+Run the automated build and simulation batch script:
+```cmd
+.\run_simulation.bat
+```
+To feed a custom synthetic dataset from a CSV file:
+```cmd
+.\run_simulation.bat synthetic_tasks.csv
+```
+
+### Option 2: Python Model Execution
+```cmd
+python simulate_lavd.py
+```
+Or with a custom dataset:
+```cmd
+python simulate_lavd.py synthetic_tasks.csv
+```
+
+---
+
+## 5. Configuring Custom Synthetic Workloads
+
+You can define custom game workloads either in `synthetic_tasks.csv` or programmatically in the task definition arrays.
+
+### CSV Format Schema
+```csv
+name,pid,weight,avg_runtime_us,acc_runtime_us,wait_freq,wake_freq,svc_time_ms,flags
+```
+
+### Parameter Reference:
+- **`name`**: Descriptive thread or job identifier.
+- **`pid`**: Process/Thread identifier.
+- **`weight`**: Relative scheduling weight (1024 represents default standard priority).
+- **`avg_runtime_us`**: Average execution duration per scheduling event in microseconds.
+- **`acc_runtime_us`**: Accumulated invariant runtime during continuous execution bursts.
+- **`wait_freq`**: Frequency of blocking/yielding on locks or input events per second.
+- **`wake_freq`**: Frequency of waking partner threads per second.
+- **`svc_time_ms`**: Historical CPU service consumption in milliseconds.
+- **`flags`**: Behavioral trigger flags:
+  - `0x10` (`IS_WAKEUP`): Freshly awakened thread.
+  - `0x1000` (`WOKEN_BY_HARDIRQ`): Woken by hardware event (mouse, keyboard, frame sync).
+  - `0x2000` (`WOKEN_BY_SOFTIRQ`): Woken by network protocol or timer bottom-half.
